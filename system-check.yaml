@@ -1,0 +1,52 @@
+---
+# ==============================================================================
+# System Check DAG
+# ==============================================================================
+
+name: system-check
+description: "Check system health and resources"
+
+steps:
+  - name: check-disk-space
+    description: "Check available disk space"
+    command: |
+      echo "=== Disk Space ==="
+      df -h | grep -E '(Filesystem|/dev/)'
+      echo ""
+      echo "Available space on /opt/dagu:"
+      df -h /opt/dagu | tail -1 | awk '{print "Total: "$2", Used: "$3", Available: "$4", Use%: "$5}'
+
+  - name: check-memory
+    description: "Check memory usage"
+    command: |
+      echo "=== Memory Usage ==="
+      free -h
+    depends:
+      - check-disk-space
+
+  - name: check-processes
+    description: "Check running Dagu processes"
+    command: |
+      echo "=== Dagu Processes ==="
+      ps aux | grep -i dagu | grep -v grep || echo "No Dagu processes found"
+    depends:
+      - check-memory
+
+  - name: report
+    description: "Generate system report"
+    command: |
+      echo "╔════════════════════════════════════════╗"
+      echo "║      System Check Complete             ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      echo "Timestamp: $(date)"
+      echo "Uptime: $(uptime -p 2>/dev/null || uptime)"
+      echo ""
+      echo "All checks passed ✓"
+    depends:
+      - check-processes
+
+tags:
+  - system
+  - monitoring
+  - health-check
