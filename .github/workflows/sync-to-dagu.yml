@@ -54,6 +54,7 @@ jobs:
         uses: bitwarden/sm-action@v2
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          base_url: https://vault.bitwarden.eu
           secrets: |
             f942f933-552f-49bf-bc03-b39101441184 > TS_OAUTH_CLIENT_ID
             019095dc-43b6-4433-9dad-b39101444e03 > TS_OAUTH_SECRET
