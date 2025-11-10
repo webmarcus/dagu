@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Hello World DAG - Simple Test
+# ==============================================================================
+
+name: hello-world
+description: "Simple hello world workflow for testing"
+
+steps:
+  - name: greet
+    description: "Print hello world"
+    command: |
+      echo "Hello from Dagu!"
+      echo "Timestamp: $(date)"
+      echo "Hostname: $(hostname)"
+
+  - name: info
+    description: "Display environment info"
+    command: |
+      echo "=== Environment ==="
+      echo "User: $(whoami)"
+      echo "Working Directory: $(pwd)"
+      echo "Dagu Version: $(dagu version 2>/dev/null || echo 'N/A')"
+    depends:
+      - greet
+
+tags:
+  - test
+  - hello-world
