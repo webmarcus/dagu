@@ -64,13 +64,15 @@ jobs:
         run: |
           echo "🔍 Detecting changed DAG files..."
 
-          # Changed or new files
+          # Changed or new files (exclude .github directory)
           git diff --name-only --diff-filter=ACMR HEAD~1 HEAD | \
-            grep -E '\.(yaml|yml)$' > changed.txt || true
+            grep -E '\.(yaml|yml)$' | \
+            grep -v '^\.github/' > changed.txt || true
 
-          # Deleted files
+          # Deleted files (exclude .github directory)
           git diff --name-only --diff-filter=D HEAD~1 HEAD | \
-            grep -E '\.(yaml|yml)$' > deleted.txt || true
+            grep -E '\.(yaml|yml)$' | \
+            grep -v '^\.github/' > deleted.txt || true
 
           echo "=== Changed/Added files ==="
           cat changed.txt
