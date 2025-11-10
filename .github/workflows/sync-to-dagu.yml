@@ -191,10 +191,19 @@ jobs:
           while IFS= read -r file; do
             if [ -f "$file" ]; then
               echo "  📄 $file"
+              # Upload to temp location first, then move with sudo
               if scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
                 "$file" \
-                "${COORDINATOR}:/opt/dagu/dags/$file"; then
-                SUCCESS=$((SUCCESS + 1))
+                "root@${COORDINATOR}:/tmp/$(basename $file)"; then
+                # Move file to final location and set permissions
+                if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+                  "root@${COORDINATOR}" \
+                  "mv /tmp/$(basename $file) /opt/dagu/dags/$file && chown dagu:dagu /opt/dagu/dags/$file"; then
+                  SUCCESS=$((SUCCESS + 1))
+                else
+                  echo "    ❌ Failed to move $file to final location"
+                  FAILED=$((FAILED + 1))
+                fi
               else
                 echo "    ❌ Failed to upload $file"
                 FAILED=$((FAILED + 1))
@@ -222,7 +231,7 @@ jobs:
           while IFS= read -r file; do
             echo "  🗑️  $file"
             if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-              "${COORDINATOR}" \
+              "root@${COORDINATOR}" \
               "rm -f /opt/dagu/dags/$file"; then
               SUCCESS=$((SUCCESS + 1))
             else
