@@ -1,0 +1,110 @@
+---
+# ==============================================================================
+# Test DAG - Example Workflow
+# ==============================================================================
+#
+# This DAG demonstrates basic Dagu functionality and can be used to test
+# the Git sync mechanisms (both initial deploy and GitHub Actions).
+#
+# ==============================================================================
+
+name: test-dag
+description: "Test workflow demonstrating Dagu features"
+
+# Optional: Schedule for periodic execution
+# schedule: "*/15 * * * *"  # Every 15 minutes
+
+# Environment variables available to all steps
+env:
+  - TEST_ENV: "production"
+  - LOG_LEVEL: "info"
+
+# Parameters that can be overridden at runtime
+params:
+  - NAME=World
+  - COUNT=5
+
+# Main workflow steps
+steps:
+  # Step 1: Simple echo command
+  - name: hello
+    description: "Print greeting message"
+    command: |
+      echo "Hello, ${NAME}!"
+      echo "Running in ${TEST_ENV} environment"
+      echo "Log level: ${LOG_LEVEL}"
+      date
+
+  # Step 2: System information
+  - name: system-info
+    description: "Display system information"
+    command: |
+      echo "=== System Information ==="
+      echo "Hostname: $(hostname)"
+      echo "OS: $(uname -s)"
+      echo "Architecture: $(uname -m)"
+      echo "Kernel: $(uname -r)"
+      echo "Uptime: $(uptime)"
+    depends:
+      - hello
+
+  # Step 3: Counter loop
+  - name: counter
+    description: "Count from 1 to COUNT"
+    command: |
+      echo "Counting to ${COUNT}..."
+      for i in $(seq 1 ${COUNT}); do
+        echo "Count: $i"
+        sleep 1
+      done
+      echo "Done counting!"
+    depends:
+      - system-info
+
+  # Step 4: Parallel execution example (runs simultaneously with counter)
+  - name: parallel-task
+    description: "Task that runs in parallel"
+    command: |
+      echo "This task runs in parallel with counter"
+      echo "Worker ID: ${DAGU_WORKER_ID:-localhost}"
+      sleep 3
+      echo "Parallel task completed"
+    depends:
+      - system-info
+
+  # Step 5: Final summary (waits for both counter and parallel-task)
+  - name: summary
+    description: "Display workflow summary"
+    command: |
+      echo "================================"
+      echo "   Test DAG Completed!         "
+      echo "================================"
+      echo "Workflow: test-dag"
+      echo "Timestamp: $(date)"
+      echo "All steps executed successfully"
+    depends:
+      - counter
+      - parallel-task
+
+# Error handling
+handlers:
+  # Handler for failed steps
+  - name: on-failure
+    command: |
+      echo "ERROR: Workflow failed at step: ${DAGU_STEP_NAME}"
+      echo "Time: $(date)"
+    condition: failure
+
+# Optional: Email notifications
+# mailOn:
+#   failure: true
+#   success: false
+
+# Optional: History retention
+histRetentionDays: 30
+
+# Optional: Tags for organization
+tags:
+  - test
+  - example
+  - tutorial

@@ -1,0 +1,130 @@
+---
+# ==============================================================================
+# Distributed Execution Test DAG
+# ==============================================================================
+#
+# This DAG demonstrates distributed task execution using worker labels.
+# Tasks are routed to specific workers based on their capabilities.
+#
+# Prerequisites:
+# - Coordinator running with gRPC enabled
+# - Workers connected with appropriate labels
+#
+# ==============================================================================
+
+name: distributed-test
+description: "Test distributed execution with worker labels"
+
+# Environment
+env:
+  - PROJECT_NAME: "distributed-test"
+  - REGION: "eu-north-1"
+
+# Steps with worker label requirements
+steps:
+  # Step 1: General task (runs on any worker)
+  - name: general-task
+    description: "Task that runs on any available worker"
+    command: |
+      echo "=== General Task ==="
+      echo "Worker: ${DAGU_WORKER_ID:-coordinator}"
+      echo "Hostname: $(hostname)"
+      echo "This task can run on any worker"
+      sleep 2
+
+  # Step 2: CPU-intensive task (requires CPU worker)
+  - name: cpu-task
+    description: "CPU-intensive computation"
+    command: |
+      echo "=== CPU-Intensive Task ==="
+      echo "Worker: ${DAGU_WORKER_ID:-coordinator}"
+      echo "Running CPU-intensive workload..."
+
+      # Simulate CPU work
+      for i in {1..5}; do
+        echo "Processing batch $i..."
+        sleep 1
+      done
+
+      echo "CPU task completed"
+    requiredLabels:
+      type: "cpu-intensive"
+    depends:
+      - general-task
+
+  # Step 3: Region-specific task
+  - name: regional-task
+    description: "Task that must run in specific region"
+    command: |
+      echo "=== Regional Task ==="
+      echo "Worker: ${DAGU_WORKER_ID:-coordinator}"
+      echo "Region: ${REGION}"
+      echo "This task runs only in EU-NORTH-1"
+
+      # Region-specific operations
+      echo "Performing regional operations..."
+      sleep 2
+    requiredLabels:
+      region: "eu-north-1"
+    depends:
+      - general-task
+
+  # Step 4: GPU task (optional - only if GPU worker available)
+  - name: gpu-task
+    description: "GPU-accelerated computation (optional)"
+    command: |
+      echo "=== GPU Task ==="
+      echo "Worker: ${DAGU_WORKER_ID:-coordinator}"
+      echo "Running GPU workload..."
+
+      # Check for GPU
+      if command -v nvidia-smi &> /dev/null; then
+        echo "GPU detected:"
+        nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+      else
+        echo "No GPU available - using CPU fallback"
+      fi
+
+      sleep 2
+    requiredLabels:
+      gpu: "nvidia-a100"
+    continueOn:
+      skipped: true  # Continue even if no GPU worker available
+    depends:
+      - general-task
+
+  # Step 5: Summary (collects results from all workers)
+  - name: summary
+    description: "Collect and display results from all workers"
+    command: |
+      echo "===================================="
+      echo "  Distributed Test Summary         "
+      echo "===================================="
+      echo "Project: ${PROJECT_NAME}"
+      echo "Region: ${REGION}"
+      echo "Timestamp: $(date)"
+      echo ""
+      echo "All distributed tasks completed successfully!"
+      echo "Tasks were routed to appropriate workers based on labels."
+    depends:
+      - cpu-task
+      - regional-task
+      - gpu-task
+
+# Error handling
+handlers:
+  - name: on-failure
+    command: |
+      echo "ERROR: Distributed workflow failed"
+      echo "Step: ${DAGU_STEP_NAME}"
+      echo "Worker: ${DAGU_WORKER_ID:-coordinator}"
+    condition: failure
+
+# History retention
+histRetentionDays: 30
+
+# Tags
+tags:
+  - distributed
+  - test
+  - worker-routing

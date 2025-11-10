@@ -1,0 +1,244 @@
+---
+# ==============================================================================
+# Sync DAGs to Dagu Coordinator
+# ==============================================================================
+#
+# Incremental DAG sync triggered on every commit to main branch.
+# Only changed/added/deleted YAML files are transferred via Tailscale SSH.
+#
+# Setup Requirements:
+#
+# 1. Create Tailscale OAuth client: https://login.tailscale.com/admin/settings/oauth
+#    - Name: "GitHub Actions - DAG Sync"
+#    - Scopes: devices (read)
+#    - Tags: tag:ci
+#
+# 2. Store Tailscale credentials in Bitwarden Secrets Manager:
+#    - Create secret for TS_OAUTH_CLIENT_ID (OAuth client ID)
+#    - Create secret for TS_OAUTH_SECRET (OAuth client secret)
+#    - Note the secret IDs (UUIDs)
+#
+# 3. Add to GitHub Secrets (Repository Settings → Secrets and variables → Actions):
+#    - BWS_ACCESS_TOKEN: Bitwarden Secrets Manager access token
+#      Get from: Bitwarden web vault → Machine accounts
+#
+# 4. Secret IDs are configured in workflow (line 58-59):
+#    ✅ TS_OAUTH_CLIENT_ID: f942f933-552f-49bf-bc03-b39101441184
+#    ✅ TS_OAUTH_SECRET: 019095dc-43b6-4433-9dad-b39101444e03
+#
+# 5. Ensure coordinator has tag: tag:dagu-coordinator in Tailscale
+#
+# ==============================================================================
+
+name: Sync DAGs to Dagu
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.yaml'
+      - '**.yml'
+
+jobs:
+  sync-dags:
+    name: Incremental DAG Sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit for diff
+
+      - name: Get secrets from Bitwarden
+        uses: bitwarden/sm-action@v2
+        with:
+          access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          secrets: |
+            f942f933-552f-49bf-bc03-b39101441184 > TS_OAUTH_CLIENT_ID
+            019095dc-43b6-4433-9dad-b39101444e03 > TS_OAUTH_SECRET
+
+      - name: Detect changed DAG files
+        id: changes
+        run: |
+          echo "🔍 Detecting changed DAG files..."
+
+          # Changed or new files
+          git diff --name-only --diff-filter=ACMR HEAD~1 HEAD | \
+            grep -E '\.(yaml|yml)$' > changed.txt || true
+
+          # Deleted files
+          git diff --name-only --diff-filter=D HEAD~1 HEAD | \
+            grep -E '\.(yaml|yml)$' > deleted.txt || true
+
+          echo "=== Changed/Added files ==="
+          cat changed.txt
+          echo ""
+          echo "=== Deleted files ==="
+          cat deleted.txt
+          echo ""
+
+          # Set outputs
+          CHANGED_COUNT=$(wc -l < changed.txt)
+          DELETED_COUNT=$(wc -l < deleted.txt)
+
+          echo "has_changes=$(test -s changed.txt && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "has_deletions=$(test -s deleted.txt && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "changed_count=$CHANGED_COUNT" >> $GITHUB_OUTPUT
+          echo "deleted_count=$DELETED_COUNT" >> $GITHUB_OUTPUT
+
+          if [ $CHANGED_COUNT -eq 0 ] && [ $DELETED_COUNT -eq 0 ]; then
+            echo "ℹ️  No DAG files changed in this commit"
+          fi
+
+      - name: Find Dagu Coordinator via Tailscale API
+        if: steps.changes.outputs.has_changes == 'true' || steps.changes.outputs.has_deletions == 'true'
+        id: find-coordinator
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ env.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ env.TS_OAUTH_SECRET }}
+        run: |
+          echo "🔍 Searching for Dagu coordinator in Tailscale mesh..."
+
+          # Get OAuth token
+          TOKEN_RESPONSE=$(curl -s -X POST \
+            "https://api.tailscale.com/api/v2/oauth/token" \
+            -u "${TS_OAUTH_CLIENT_ID}:${TS_OAUTH_SECRET}" \
+            -d "grant_type=client_credentials")
+
+          ACCESS_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.access_token')
+
+          if [ "$ACCESS_TOKEN" == "null" ] || [ -z "$ACCESS_TOKEN" ]; then
+            echo "❌ Failed to obtain OAuth token"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+
+          # Extract tailnet from OAuth client ID (format: k{tailnet}-{random})
+          TAILNET=$(echo $TS_OAUTH_CLIENT_ID | cut -d'-' -f1 | sed 's/^k//')
+
+          echo "Tailnet: $TAILNET"
+
+          # List devices and filter by tag
+          DEVICES=$(curl -s \
+            "https://api.tailscale.com/api/v2/tailnet/${TAILNET}/devices" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}")
+
+          # Find coordinator by tag:dagu-coordinator
+          COORDINATOR=$(echo $DEVICES | jq -r '
+            .devices[] |
+            select(.tags[]? == "tag:dagu-coordinator") |
+            .hostname
+          ' | head -1)
+
+          if [ -z "$COORDINATOR" ] || [ "$COORDINATOR" == "null" ]; then
+            echo "❌ No coordinator found with tag:dagu-coordinator"
+            echo "Available devices:"
+            echo $DEVICES | jq -r '.devices[] | "\(.hostname) - Tags: \(.tags[]?)"'
+            exit 1
+          fi
+
+          echo "✅ Found coordinator: $COORDINATOR"
+          echo "coordinator_host=$COORDINATOR" >> $GITHUB_OUTPUT
+
+      - name: Connect to Tailscale
+        if: steps.changes.outputs.has_changes == 'true' || steps.changes.outputs.has_deletions == 'true'
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ env.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ env.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Wait for Tailscale connection
+        if: steps.changes.outputs.has_changes == 'true' || steps.changes.outputs.has_deletions == 'true'
+        run: |
+          echo "⏳ Waiting for Tailscale mesh connection..."
+          sleep 5
+
+          # Verify we can reach coordinator
+          COORDINATOR="${{ steps.find-coordinator.outputs.coordinator_host }}"
+          if ! ping -c 1 -W 5 "$COORDINATOR" > /dev/null 2>&1; then
+            echo "❌ Cannot reach coordinator: $COORDINATOR"
+            echo "Tailscale status:"
+            tailscale status
+            exit 1
+          fi
+
+          echo "✅ Tailscale connection established"
+
+      - name: Upload changed/new DAGs
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          COORDINATOR: ${{ steps.find-coordinator.outputs.coordinator_host }}
+        run: |
+          echo "📤 Uploading ${{ steps.changes.outputs.changed_count }} changed/new DAG(s)..."
+
+          SUCCESS=0
+          FAILED=0
+
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              echo "  📄 $file"
+              if scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+                "$file" \
+                "${COORDINATOR}:/opt/dagu/dags/$file"; then
+                SUCCESS=$((SUCCESS + 1))
+              else
+                echo "    ❌ Failed to upload $file"
+                FAILED=$((FAILED + 1))
+              fi
+            fi
+          done < changed.txt
+
+          echo ""
+          echo "✅ Uploaded: $SUCCESS files"
+          if [ $FAILED -gt 0 ]; then
+            echo "❌ Failed: $FAILED files"
+            exit 1
+          fi
+
+      - name: Delete removed DAGs
+        if: steps.changes.outputs.has_deletions == 'true'
+        env:
+          COORDINATOR: ${{ steps.find-coordinator.outputs.coordinator_host }}
+        run: |
+          echo "🗑️  Deleting ${{ steps.changes.outputs.deleted_count }} removed DAG(s)..."
+
+          SUCCESS=0
+          FAILED=0
+
+          while IFS= read -r file; do
+            echo "  🗑️  $file"
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+              "${COORDINATOR}" \
+              "rm -f /opt/dagu/dags/$file"; then
+              SUCCESS=$((SUCCESS + 1))
+            else
+              echo "    ❌ Failed to delete $file"
+              FAILED=$((FAILED + 1))
+            fi
+          done < deleted.txt
+
+          echo ""
+          echo "✅ Deleted: $SUCCESS files"
+          if [ $FAILED -gt 0 ]; then
+            echo "❌ Failed: $FAILED files"
+            exit 1
+          fi
+
+      - name: Summary
+        if: steps.changes.outputs.has_changes == 'true' || steps.changes.outputs.has_deletions == 'true'
+        env:
+          COORDINATOR: ${{ steps.find-coordinator.outputs.coordinator_host }}
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════╗"
+          echo "║          DAG Sync Completed Successfully              ║"
+          echo "╚════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Target:   ${COORDINATOR}"
+          echo "Changed:  ${{ steps.changes.outputs.changed_count }} files"
+          echo "Deleted:  ${{ steps.changes.outputs.deleted_count }} files"
+          echo ""
+          echo "View DAGs: http://${COORDINATOR}:8080"
+          echo ""
