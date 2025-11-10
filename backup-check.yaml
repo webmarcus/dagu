@@ -1,0 +1,82 @@
+---
+# ==============================================================================
+# Backup Check DAG
+# ==============================================================================
+
+name: backup-check
+description: "Verify backup directories and retention policies"
+
+env:
+  - BACKUP_DIR: "/opt/dagu/dags-backup"
+  - RETENTION_DAYS: "30"
+
+steps:
+  - name: check-backup-directory
+    description: "Verify backup directory exists"
+    command: |
+      echo "=== Backup Directory Check ==="
+      echo "Backup location: ${BACKUP_DIR}"
+
+      if [ -d "${BACKUP_DIR}" ]; then
+        echo "✓ Backup directory exists"
+        echo ""
+        echo "Directory size:"
+        du -sh "${BACKUP_DIR}"
+      else
+        echo "✗ Backup directory not found"
+        echo "Creating backup directory..."
+        mkdir -p "${BACKUP_DIR}"
+      fi
+
+  - name: list-backups
+    description: "List existing backups"
+    command: |
+      echo "=== Existing Backups ==="
+
+      if [ -d "${BACKUP_DIR}" ] && [ "$(ls -A ${BACKUP_DIR})" ]; then
+        echo "Backup count: $(ls -1 ${BACKUP_DIR} | wc -l)"
+        echo ""
+        echo "Latest 5 backups:"
+        ls -lt "${BACKUP_DIR}" | head -6 | tail -5
+      else
+        echo "No backups found"
+      fi
+    depends:
+      - check-backup-directory
+
+  - name: check-retention
+    description: "Check backup retention policy"
+    command: |
+      echo "=== Retention Policy Check ==="
+      echo "Retention: ${RETENTION_DAYS} days"
+
+      if [ -d "${BACKUP_DIR}" ]; then
+        OLD_BACKUPS=$(find "${BACKUP_DIR}" -type d -mtime +${RETENTION_DAYS} | wc -l)
+        echo "Backups older than ${RETENTION_DAYS} days: ${OLD_BACKUPS}"
+
+        if [ ${OLD_BACKUPS} -gt 0 ]; then
+          echo ""
+          echo "Consider cleanup with:"
+          echo "  find ${BACKUP_DIR} -type d -mtime +${RETENTION_DAYS} -exec rm -rf {} +"
+        fi
+      fi
+    depends:
+      - list-backups
+
+  - name: summary
+    description: "Backup check summary"
+    command: |
+      echo "╔════════════════════════════════════════╗"
+      echo "║    Backup Check Completed              ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      echo "Backup location: ${BACKUP_DIR}"
+      echo "Retention policy: ${RETENTION_DAYS} days"
+      echo "Check completed: $(date)"
+    depends:
+      - check-retention
+
+tags:
+  - backup
+  - maintenance
+  - monitoring
