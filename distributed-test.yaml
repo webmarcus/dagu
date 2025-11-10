@@ -111,15 +111,6 @@ steps:
       - regional-task
       - gpu-task
 
-# Error handling
-handlers:
-  - name: on-failure
-    command: |
-      echo "ERROR: Distributed workflow failed"
-      echo "Step: ${DAGU_STEP_NAME}"
-      echo "Worker: ${DAGU_WORKER_ID:-coordinator}"
-    condition: failure
-
 # History retention
 histRetentionDays: 30
 

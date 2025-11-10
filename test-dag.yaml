@@ -86,15 +86,6 @@ steps:
       - counter
       - parallel-task
 
-# Error handling
-handlers:
-  # Handler for failed steps
-  - name: on-failure
-    command: |
-      echo "ERROR: Workflow failed at step: ${DAGU_STEP_NAME}"
-      echo "Time: $(date)"
-    condition: failure
-
 # Optional: Email notifications
 # mailOn:
 #   failure: true
