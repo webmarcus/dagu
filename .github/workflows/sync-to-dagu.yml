@@ -115,15 +115,24 @@ jobs:
             exit 1
           fi
 
-          # Extract tailnet from OAuth client ID (format: k{tailnet}-{random})
-          TAILNET=$(echo $TS_OAUTH_CLIENT_ID | cut -d'-' -f1 | sed 's/^k//')
+          echo "✅ OAuth token obtained"
 
-          echo "Tailnet: $TAILNET"
-
-          # List devices and filter by tag
+          # Get tailnet info from /api/v2/tailnet/-/devices (- means current tailnet)
+          echo "Fetching devices from tailnet..."
           DEVICES=$(curl -s \
-            "https://api.tailscale.com/api/v2/tailnet/${TAILNET}/devices" \
+            "https://api.tailscale.com/api/v2/tailnet/-/devices" \
             -H "Authorization: Bearer ${ACCESS_TOKEN}")
+
+          # Debug: Show API response (without sensitive data)
+          echo "API Response status:"
+          if echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
+            echo "✅ Valid response with devices array"
+            echo "Device count: $(echo $DEVICES | jq '.devices | length')"
+          else
+            echo "❌ Invalid API response"
+            echo "Response: $DEVICES"
+            exit 1
+          fi
 
           # Find coordinator by tag:dagu-coordinator
           COORDINATOR=$(echo $DEVICES | jq -r '
