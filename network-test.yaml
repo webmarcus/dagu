@@ -1,0 +1,71 @@
+---
+# ==============================================================================
+# Network Test DAG
+# ==============================================================================
+
+name: network-test
+description: "Test network connectivity and DNS resolution"
+
+steps:
+  - name: check-connectivity
+    description: "Check external connectivity"
+    command: |
+      echo "=== Network Connectivity Test ==="
+      echo "Testing DNS resolution..."
+
+      if ping -c 3 8.8.8.8 > /dev/null 2>&1; then
+        echo "✓ Internet connectivity: OK"
+      else
+        echo "✗ Internet connectivity: FAILED"
+        exit 1
+      fi
+
+  - name: check-dns
+    description: "Check DNS resolution"
+    command: |
+      echo "=== DNS Resolution Test ==="
+
+      if nslookup google.com > /dev/null 2>&1; then
+        echo "✓ DNS resolution: OK"
+      else
+        echo "✗ DNS resolution: FAILED"
+        exit 1
+      fi
+
+      echo ""
+      echo "Resolving github.com:"
+      nslookup github.com
+    depends:
+      - check-connectivity
+
+  - name: check-tailscale
+    description: "Check Tailscale status"
+    command: |
+      echo "=== Tailscale Status ==="
+
+      if command -v tailscale &> /dev/null; then
+        echo "Tailscale installed: YES"
+        echo ""
+        tailscale status --peers=false || echo "Could not get status"
+      else
+        echo "Tailscale installed: NO"
+      fi
+    depends:
+      - check-dns
+
+  - name: summary
+    description: "Network test summary"
+    command: |
+      echo "╔════════════════════════════════════════╗"
+      echo "║    Network Tests Completed             ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      echo "All network checks passed ✓"
+      echo "Timestamp: $(date)"
+    depends:
+      - check-tailscale
+
+tags:
+  - network
+  - connectivity
+  - test
